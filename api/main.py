@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
+STATIC_DIR = Path(__file__).parent / "static"
 
 engine: Engine | None = None
 
@@ -38,6 +41,13 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.get("/", include_in_schema=False)
+def dashboard():
+    """Human-facing dashboard (charts/tables over the same endpoints below).
+    Kept separate from the JSON API surface, which starts at /health."""
+    return FileResponse(STATIC_DIR / "dashboard.html")
 
 
 def run_query(sql: str, params: dict | None = None) -> list[dict]:
