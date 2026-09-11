@@ -1,0 +1,82 @@
+<svg viewBox="0 0 1050 420" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+  <style>
+    .layer { stroke-width:1.5; rx:10; }
+    .raw { fill:#fdf3e3; stroke:#c9891f; }
+    .staging { fill:#fbeaea; stroke:#c0392b; }
+    .processed { fill:#eef4fb; stroke:#3b6ea5; }
+    .warehouse { fill:#eafaf0; stroke:#2f9e5e; }
+    .gold { fill:#f5eefc; stroke:#7a4fb0; }
+    .bi { fill:#e8f6f8; stroke:#1a8fa0; }
+    .title { font-size:15px; font-weight:bold; text-anchor:middle; }
+    .desc { font-size:11px; text-anchor:middle; }
+    .fmt { font-size:10px; text-anchor:middle; font-style:italic; fill:#666; }
+    .arrow { stroke:#555; stroke-width:1.8; fill:none; marker-end:url(#arrow3); }
+    .gate { font-size:10px; text-anchor:middle; fill:#c0392b; font-weight:bold; }
+  </style>
+
+  <text x="525" y="28" text-anchor="middle" font-size="19" font-weight="bold">Data Flow — Medallion Architecture</text>
+
+  <!-- Raw -->
+  <rect class="layer raw" x="20" y="80" width="150" height="150"/>
+  <text class="title" x="95" y="108">RAW</text>
+  <text class="desc" x="95" y="128">data_generator/</text>
+  <text class="desc" x="95" y="144">→ S3/MinIO</text>
+  <text class="fmt" x="95" y="164">CSV / JSON</text>
+  <text class="fmt" x="95" y="180">(intentionally dirty)</text>
+  <text class="desc" x="95" y="205" font-size="10">9 datasets</text>
+
+  <!-- Staging -->
+  <rect class="layer staging" x="210" y="80" width="150" height="150"/>
+  <text class="title" x="285" y="108">STAGING</text>
+  <text class="desc" x="285" y="128">load_staging.py</text>
+  <text class="fmt" x="285" y="150">Postgres, loose types</text>
+  <text class="fmt" x="285" y="166">dirty data preserved</text>
+  <text class="gate" x="285" y="195">◄ DQ GATE (23 checks)</text>
+  <text class="gate" x="285" y="210">fails pipeline if &lt; 95%</text>
+
+  <!-- Processed -->
+  <rect class="layer processed" x="400" y="80" width="150" height="150"/>
+  <text class="title" x="475" y="108">PROCESSED</text>
+  <text class="desc" x="475" y="128">spark/jobs/*.py</text>
+  <text class="fmt" x="475" y="150">Parquet</text>
+  <text class="fmt" x="475" y="166">cleaned, type-cast</text>
+  <text class="desc" x="475" y="188" font-size="10">referentially valid</text>
+  <text class="desc" x="475" y="204" font-size="10">(orphans dropped)</text>
+
+  <!-- Warehouse -->
+  <rect class="layer warehouse" x="590" y="80" width="150" height="150"/>
+  <text class="title" x="665" y="108">WAREHOUSE</text>
+  <text class="desc" x="665" y="128">load_warehouse.py</text>
+  <text class="fmt" x="665" y="150">Postgres, Star Schema</text>
+  <text class="fmt" x="665" y="166">dim_* / fact_*</text>
+  <text class="desc" x="665" y="188" font-size="10">full-refresh every run</text>
+
+  <!-- Gold -->
+  <rect class="layer gold" x="780" y="80" width="150" height="150"/>
+  <text class="title" x="855" y="108">GOLD</text>
+  <text class="desc" x="855" y="128">build_customer_360.py</text>
+  <text class="desc" x="855" y="144">build_rfm/retention/clv.py</text>
+  <text class="fmt" x="855" y="166">customer_360, RFM,</text>
+  <text class="fmt" x="855" y="180">segments, CLV, cohort</text>
+
+  <!-- BI -->
+  <rect class="layer bi" x="380" y="290" width="270" height="90"/>
+  <text class="title" x="515" y="320">POWER BI</text>
+  <text class="desc" x="515" y="340">5-page dashboard</text>
+  <text class="fmt" x="515" y="358">Executive · Customer 360 · Segments</text>
+  <text class="fmt" x="515" y="372">Retention · Behavior</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M170,155 H210"/>
+  <path class="arrow" d="M360,155 H400"/>
+  <path class="arrow" d="M550,155 H590"/>
+  <path class="arrow" d="M740,155 H780"/>
+  <path class="arrow" d="M855,230 V290 Q855,335 650,335"/>
+
+  <text x="525" y="410" text-anchor="middle" font-size="11" fill="#888">Orchestrated by Airflow (Phase 7) · every step's timing/status recorded by Monitoring (Phase 14)</text>
+</svg>

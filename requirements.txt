@@ -1,0 +1,46 @@
+# --- Core ---
+python-dotenv==1.0.1
+
+# --- Data generation & manipulation ---
+pandas==2.2.2
+numpy==1.26.4
+faker==25.2.0
+
+# --- Big data processing ---
+pyspark==3.5.1
+
+# --- Database ---
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.30
+
+# NOTE: Airflow itself is NOT installed here. The airflow-webserver /
+# airflow-scheduler services in docker-compose.yml use the official
+# apache/airflow image directly, to avoid dependency conflicts between
+# Airflow's constrained requirements and PySpark/pandas/numpy versions.
+# If you need the Airflow Python API locally (e.g. for DAG unit tests),
+# install it in a separate virtualenv:
+#   pip install "apache-airflow==2.9.1" --constraint \
+#     "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.1/constraints-3.12.txt"
+
+# --- Data quality ---
+# (Data quality is implemented as this project's own SQL-based check
+# engine — data_quality/checks.py — not a third-party framework; see
+# Section 12 of the README for why: keeping every check readable as
+# plain SQL made the exact business rule behind each one easy to
+# audit, and avoided pulling in a library heavier than what a ~20-rule
+# check suite actually needed.)
+
+# --- Testing ---
+pytest>=9.1.1
+pytest-cov>=7.1.0
+moto[s3]==5.2.3
+
+# --- Cloud (AWS) ---
+boto3>=1.34.106
+
+# --- Notebook (optional, for exploration) ---
+jupyterlab==4.2.0
+
+# --- Utilities ---
+pyarrow==16.1.0
+tqdm==4.66.4

@@ -1,0 +1,274 @@
+version: "3.9"
+
+# =========================================================
+# Customer 360 Analytics Platform — Local Development Stack
+#
+# Services:
+#   postgres      -> Analytics Warehouse DB + Airflow metadata DB
+#   airflow       -> Orchestration (standalone mode: webserver+scheduler)
+#   minio         -> S3-compatible object storage (local Data Lake)
+#   spark-master  -> Spark cluster master
+#   spark-worker  -> Spark cluster worker
+#   etl           -> Python container for data_generator / spark jobs / data_quality scripts
+#   jupyter       -> optional notebook for exploration (profile: tools)
+#
+# No secrets are hard-coded here — everything comes from .env
+# (copy .env.example -> .env and fill in real values first).
+# =========================================================
+
+x-airflow-common-env: &airflow-common-env
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME}
+  AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW__CORE__FERNET_KEY}
+  AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
+  AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+  # PYTHONPATH: so `from spark.jobs.run_all import ...`, `from data_lake...`,
+  # `from data_quality...` (used directly by airflow/dags/customer_360_pipeline.py)
+  # resolve as top-level packages — those directories are mounted at
+  # /opt/airflow/<package> below, sibling to /opt/airflow/dags.
+  PYTHONPATH: /opt/airflow
+  # Analytics DB connection (NOT the Airflow metadata DB above) — used
+  # by data_quality/, spark/jobs/load_warehouse.py, sql/ddl_deploy.py
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  # Data lake (MinIO locally; see data_lake/s3_client.py)
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER}}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD}}
+  AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+  AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+  AWS_S3_ENDPOINT_URL: http://minio:9000
+  DQ_MIN_PASS_RATE: ${DQ_MIN_PASS_RATE}
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: c360_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      AIRFLOW_DB_USER: ${AIRFLOW_DB_USER}
+      AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      AIRFLOW_DB_NAME: ${AIRFLOW_DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/ddl/00_init_databases.sh:/docker-entrypoint-initdb.d/00_init_databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - c360_network
+
+  # ---------------------------------------------------------------
+  # minio: S3-compatible object storage, standing in for AWS S3 in
+  # local development. Same API (boto3 speaks to both identically),
+  # so data_lake/ code written against MinIO here runs unchanged
+  # against real S3 in AWS — just point AWS_S3_ENDPOINT_URL at
+  # nothing (real AWS) instead of http://minio:9000 (local).
+  # ---------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: c360_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - c360_network
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: c360_airflow_init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      <<: *airflow-common-env
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate &&
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER} \
+          --password ${AIRFLOW_ADMIN_PASSWORD} \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email ${AIRFLOW_ADMIN_EMAIL} || true
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data_generator:/opt/airflow/data_generator
+      - ./data_lake:/opt/airflow/data_lake
+      - ./data_quality:/opt/airflow/data_quality
+      - ./spark:/opt/airflow/spark
+      - ./sql:/opt/airflow/sql
+    networks:
+      - c360_network
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: c360_airflow_webserver
+    restart: unless-stopped
+    depends_on:
+      - airflow-init
+      - minio
+    environment:
+      <<: *airflow-common-env
+    ports:
+      - "8080:8080"
+    command: webserver
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./data_generator:/opt/airflow/data_generator
+      - ./data_lake:/opt/airflow/data_lake
+      - ./data_quality:/opt/airflow/data_quality
+      - ./spark:/opt/airflow/spark
+      - ./sql:/opt/airflow/sql
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - c360_network
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    container_name: c360_airflow_scheduler
+    restart: unless-stopped
+    depends_on:
+      - airflow-init
+      - minio
+    environment:
+      <<: *airflow-common-env
+    command: scheduler
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./data:/opt/data
+      - ./data_generator:/opt/airflow/data_generator
+      - ./data_lake:/opt/airflow/data_lake
+      - ./data_quality:/opt/airflow/data_quality
+      - ./spark:/opt/airflow/spark
+      - ./sql:/opt/airflow/sql
+      - airflow_logs:/opt/airflow/logs
+    networks:
+      - c360_network
+
+  spark-master:
+    image: bitnami/spark:3.5.1
+    container_name: c360_spark_master
+    restart: unless-stopped
+    environment:
+      SPARK_MODE: master
+    ports:
+      - "7077:7077"
+      - "8081:8080"   # Spark master UI (mapped to 8081 to avoid clashing with Airflow's 8080)
+    volumes:
+      - ./spark:/opt/spark_jobs
+      - ./data:/opt/data
+    networks:
+      - c360_network
+
+  spark-worker:
+    image: bitnami/spark:3.5.1
+    container_name: c360_spark_worker
+    restart: unless-stopped
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: 2
+    volumes:
+      - ./spark:/opt/spark_jobs
+      - ./data:/opt/data
+    networks:
+      - c360_network
+
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    container_name: c360_etl
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${MINIO_ROOT_USER}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${MINIO_ROOT_PASSWORD}}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
+      AWS_S3_ENDPOINT_URL: http://minio:9000   # unset/remove this var to target real AWS S3
+      DQ_MIN_PASS_RATE: ${DQ_MIN_PASS_RATE}
+    volumes:
+      - ./data:/opt/data
+      - ./data_generator:/opt/app/data_generator
+      - ./data_lake:/opt/app/data_lake
+      - ./data_quality:/opt/app/data_quality
+      - ./sql:/opt/app/sql
+      - ./spark:/opt/app/spark
+    command: ["tail", "-f", "/dev/null"]  # keep alive; run scripts via `docker compose exec etl ...`
+    networks:
+      - c360_network
+
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile.etl
+    container_name: c360_jupyter
+    profiles: ["tools"]   # only starts with: docker compose --profile tools up jupyter
+    depends_on:
+      - postgres
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./data:/opt/data
+      - ./data_generator:/opt/app/data_generator
+      - .:/opt/app
+    command: >
+      jupyter lab --ip=0.0.0.0 --port=8888 --no-browser
+      --allow-root --NotebookApp.token='' --notebook-dir=/opt/app
+    networks:
+      - c360_network
+
+networks:
+  c360_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  airflow_logs:
+  minio_data:

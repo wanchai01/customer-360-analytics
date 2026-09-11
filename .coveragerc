@@ -1,0 +1,19 @@
+[run]
+source = data_generator,data_lake,data_quality,spark,monitoring
+omit =
+    */tests/*
+
+[report]
+# Excludes CLI argparse wiring (the `if __name__ == "__main__":` block
+# in every module) from the coverage count. This is standard practice,
+# not a way to inflate the number: that block is `parser =
+# argparse.ArgumentParser(); ...; main()` — pure wiring with no
+# business logic of its own. The function it calls (e.g.
+# `build_customer_360()`, `clean_products()`) is what's actually
+# tested, directly, by calling it with real arguments in the test
+# suite — testing the CLI shell around it would mean spawning a
+# subprocess per test for no additional correctness signal.
+exclude_lines =
+    if __name__ == .__main__.:
+    def main\(\) -> None:
+    pragma: no cover

@@ -1,0 +1,104 @@
+<svg viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+  <style>
+    .box { fill:#eef4fb; stroke:#3b6ea5; stroke-width:1.5; rx:8; }
+    .box2 { fill:#eafaf0; stroke:#2f9e5e; stroke-width:1.5; rx:8; }
+    .box3 { fill:#fdf3e3; stroke:#c9891f; stroke-width:1.5; rx:8; }
+    .box4 { fill:#f5eefc; stroke:#7a4fb0; stroke-width:1.5; rx:8; }
+    .lbl { font-size:14px; fill:#1a1a1a; text-anchor:middle; }
+    .sub { font-size:11px; fill:#555; text-anchor:middle; }
+    .arrow { stroke:#555; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+    .phase { font-size:10px; fill:#888; text-anchor:middle; font-style:italic; }
+  </style>
+
+  <text x="500" y="28" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">Customer 360 Analytics Platform — System Architecture</text>
+
+  <!-- Row 1: Sources -->
+  <rect class="box" x="40" y="60" width="150" height="55"/>
+  <text class="lbl" x="115" y="83">Data Generator</text>
+  <text class="sub" x="115" y="99">9 synthetic datasets</text>
+  <text class="phase" x="115" y="128">Phase 2</text>
+
+  <rect class="box3" x="230" y="60" width="150" height="55"/>
+  <text class="lbl" x="305" y="83">S3 / MinIO</text>
+  <text class="sub" x="305" y="99">Data Lake (raw)</text>
+  <text class="phase" x="305" y="128">Phase 4</text>
+
+  <!-- Row 2: Staging + DQ -->
+  <rect class="box2" x="230" y="160" width="150" height="55"/>
+  <text class="lbl" x="305" y="183">Postgres: staging.*</text>
+  <text class="sub" x="305" y="199">dirty, as-is</text>
+
+  <rect class="box3" x="440" y="160" width="170" height="55"/>
+  <text class="lbl" x="525" y="180">Data Quality Gate</text>
+  <text class="sub" x="525" y="196">23 checks · fails pipeline</text>
+  <text class="sub" x="525" y="209">if pass rate &lt; 95%</text>
+  <text class="phase" x="525" y="228">Phase 6</text>
+
+  <!-- Row 3: Spark -->
+  <rect class="box" x="40" y="260" width="150" height="55"/>
+  <text class="lbl" x="115" y="283">PySpark ETL</text>
+  <text class="sub" x="115" y="299">clean + transform</text>
+  <text class="phase" x="115" y="328">Phase 5</text>
+
+  <rect class="box" x="230" y="260" width="150" height="55"/>
+  <text class="lbl" x="305" y="283">S3 processed/</text>
+  <text class="sub" x="305" y="299">Parquet</text>
+
+  <!-- Row 4: Warehouse -->
+  <rect class="box2" x="230" y="360" width="170" height="55"/>
+  <text class="lbl" x="315" y="380">Postgres: warehouse.*</text>
+  <text class="sub" x="315" y="396">Star Schema (dim/fact)</text>
+  <text class="phase" x="315" y="428">Phase 3 / 7</text>
+
+  <rect class="box2" x="440" y="360" width="170" height="55"/>
+  <text class="lbl" x="525" y="380">Postgres: analytics.*</text>
+  <text class="sub" x="525" y="396">customer_360, RFM, CLV</text>
+  <text class="phase" x="525" y="428">Phase 8 / 9</text>
+
+  <!-- Row 5: BI -->
+  <rect class="box4" x="440" y="460" width="170" height="55"/>
+  <text class="lbl" x="525" y="483">Power BI</text>
+  <text class="sub" x="525" y="499">5-page dashboard</text>
+  <text class="phase" x="525" y="528">Phase 11</text>
+
+  <!-- Orchestration + Monitoring band -->
+  <rect class="box3" x="700" y="160" width="260" height="255" rx="8"/>
+  <text class="lbl" x="830" y="185" font-weight="bold">Apache Airflow</text>
+  <text class="sub" x="830" y="203">customer_360_pipeline DAG</text>
+  <text class="sub" x="830" y="219">start_pipeline_run → check_source_data</text>
+  <text class="sub" x="830" y="235">→ ingest (parallel) → validate_data</text>
+  <text class="sub" x="830" y="251">→ spark_transform → build_customer_360</text>
+  <text class="sub" x="830" y="267">→ build_rfm_and_segments → load_postgresql</text>
+  <text class="sub" x="830" y="283">→ data_quality_check → pipeline_summary</text>
+  <text class="phase" x="830" y="303">Phase 7</text>
+  <line x1="720" y1="320" x2="940" y2="320" stroke="#c9891f" stroke-width="1"/>
+  <text class="lbl" x="830" y="345" font-weight="bold">Monitoring</text>
+  <text class="sub" x="830" y="363">pipeline_runs / pipeline_run_steps</text>
+  <text class="sub" x="830" y="379">execution time, records, failures</text>
+  <text class="phase" x="830" y="399">Phase 14</text>
+
+  <!-- AWS note -->
+  <rect x="700" y="460" width="260" height="55" rx="8" fill="#fbeaea" stroke="#c0392b" stroke-width="1.5"/>
+  <text class="lbl" x="830" y="480">AWS Production Path</text>
+  <text class="sub" x="830" y="496">S3 · RDS · EMR · MWAA</text>
+  <text class="phase" x="830" y="509">Phase 12 — see aws/architecture.md</text>
+
+  <!-- Arrows -->
+  <path class="arrow" d="M190,87 H230"/>
+  <path class="arrow" d="M305,115 V160"/>
+  <path class="arrow" d="M380,187 H440"/>
+  <path class="arrow" d="M115,115 V260"/>
+  <path class="arrow" d="M190,287 H230"/>
+  <path class="arrow" d="M305,315 V360"/>
+  <path class="arrow" d="M400,387 H440"/>
+  <path class="arrow" d="M525,415 V460"/>
+  <path class="arrow" d="M610,187 C 660,187 660,280 700,280" />
+  <path class="arrow" d="M700,300 C 660,300 610,330 610,388" />
+
+  <text x="500" y="590" text-anchor="middle" font-size="11" fill="#888">Every arrow above is idempotent per batch_date — see docs/pipeline.md</text>
+</svg>

@@ -1,0 +1,25 @@
+# Extends the official Airflow image so the DAG's task callables
+# (airflow/dags/customer_360_pipeline.py) can directly import this
+# project's own packages (data_generator, data_lake, spark, data_quality)
+# in-process, rather than needing Docker-in-Docker or SSH-exec into a
+# separate container to run them.
+FROM apache/airflow:2.9.1-python3.11
+
+USER root
+# default-jre-headless: PySpark is a Python wrapper around a real JVM
+# (Spark Core is Scala/Java) — the spark_transform task runs inside
+# this same Airflow process, so the JVM has to be here too, exactly
+# as it does in Dockerfile.etl for the same reason.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        default-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+COPY requirements.txt /tmp/requirements.txt
+# Installed against Airflow's own published constraints file — the
+# officially documented way to add extra packages to the Airflow
+# image (https://airflow.apache.org/docs/docker-stack/build.html)
+# without pip's resolver fighting Airflow's own pinned transitive
+# dependencies.
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+    --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.9.1/constraints-3.11.txt"
