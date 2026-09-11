@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: customer-360-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile.api
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+    healthCheckPath: /health
