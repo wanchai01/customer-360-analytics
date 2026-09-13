@@ -78,14 +78,18 @@ def health():
 @app.get("/customers")
 def list_customers(
     segment: str | None = Query(default=None, description="Filter by customer_segment"),
+    q: str | None = Query(default=None, description="Search by customer_id or customer_name (substring)"),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ):
-    sql = "SELECT * FROM analytics.customer_360"
+    sql = "SELECT * FROM analytics.customer_360 WHERE 1=1"
     params: dict = {"limit": limit, "offset": offset}
     if segment:
-        sql += " WHERE customer_segment = :segment"
+        sql += " AND customer_segment = :segment"
         params["segment"] = segment
+    if q:
+        sql += " AND (customer_id ILIKE :q OR customer_name ILIKE :q)"
+        params["q"] = f"%{q}%"
     sql += " ORDER BY total_spend DESC NULLS LAST LIMIT :limit OFFSET :offset"
     return run_query(sql, params)
 
@@ -101,11 +105,88 @@ def get_customer(customer_id: str):
     return rows[0]
 
 
+@app.get("/customers/{customer_id}/orders")
+def customer_orders(customer_id: str, limit: int = Query(default=20, ge=1, le=200)):
+    return run_query(
+        """
+        SELECT fo.order_id, fo.order_date, fo.order_status, fo.payment_method, fo.total_amount
+        FROM warehouse.fact_orders fo
+        JOIN warehouse.dim_customer dc ON dc.customer_key = fo.customer_key
+        WHERE dc.customer_id = :customer_id
+        ORDER BY fo.order_date DESC
+        LIMIT :limit
+        """,
+        {"customer_id": customer_id, "limit": limit},
+    )
+
+
+@app.get("/customers/{customer_id}/top-products")
+def customer_top_products(customer_id: str, limit: int = Query(default=5, ge=1, le=50)):
+    return run_query(
+        """
+        SELECT dp.product_name, dp.category, COUNT(*) AS order_count, SUM(foi.quantity) AS total_quantity
+        FROM warehouse.fact_order_items foi
+        JOIN warehouse.fact_orders fo ON fo.order_key = foi.order_key
+        JOIN warehouse.dim_customer dc ON dc.customer_key = fo.customer_key
+        JOIN warehouse.dim_product dp ON dp.product_key = foi.product_key
+        WHERE dc.customer_id = :customer_id
+        GROUP BY dp.product_name, dp.category
+        ORDER BY order_count DESC, total_quantity DESC
+        LIMIT :limit
+        """,
+        {"customer_id": customer_id, "limit": limit},
+    )
+
+
+@app.get("/customers/{customer_id}/website-activity")
+def customer_website_activity(customer_id: str, limit: int = Query(default=10, ge=1, le=100)):
+    devices = run_query(
+        """
+        SELECT COALESCE(dd.device_name, 'Unknown') AS device_name, COUNT(*) AS event_count
+        FROM warehouse.fact_website_events fwe
+        JOIN warehouse.dim_customer dc ON dc.customer_key = fwe.customer_key
+        LEFT JOIN warehouse.dim_device dd ON dd.device_key = fwe.device_key
+        WHERE dc.customer_id = :customer_id
+        GROUP BY dd.device_name
+        ORDER BY event_count DESC
+        """,
+        {"customer_id": customer_id},
+    )
+    recent_events = run_query(
+        """
+        SELECT fwe.event_timestamp, fwe.event_type, fwe.page, fwe.traffic_source
+        FROM warehouse.fact_website_events fwe
+        JOIN warehouse.dim_customer dc ON dc.customer_key = fwe.customer_key
+        WHERE dc.customer_id = :customer_id
+        ORDER BY fwe.event_timestamp DESC
+        LIMIT :limit
+        """,
+        {"customer_id": customer_id, "limit": limit},
+    )
+    return {"devices": devices, "recent_events": recent_events}
+
+
 @app.get("/rfm")
 def list_rfm(limit: int = Query(default=50, ge=1, le=500), offset: int = Query(default=0, ge=0)):
     return run_query(
         "SELECT * FROM analytics.customer_rfm ORDER BY rfm_sum DESC LIMIT :limit OFFSET :offset",
         {"limit": limit, "offset": offset},
+    )
+
+
+@app.get("/rfm/distribution")
+def rfm_distribution():
+    """5x5 grid of customer counts by recency-score x monetary-score, for a
+    heatmap view (never-purchased customers, whose scores are fixed at 1,1,1,
+    are excluded since they'd all pile into a single cell)."""
+    return run_query(
+        """
+        SELECT r_score, m_score, COUNT(*) AS customer_count
+        FROM analytics.customer_rfm
+        WHERE frequency > 0
+        GROUP BY r_score, m_score
+        ORDER BY r_score, m_score
+        """
     )
 
 
@@ -133,6 +214,76 @@ def monthly_metrics():
 def cohort_metrics():
     return run_query(
         "SELECT * FROM analytics.customer_cohort ORDER BY cohort_month, period_number"
+    )
+
+
+@app.get("/revenue-by-category")
+def revenue_by_category():
+    return run_query(
+        """
+        SELECT dp.category,
+               ROUND(SUM(foi.quantity * foi.unit_price), 2) AS revenue,
+               COUNT(DISTINCT fo.order_id) AS order_count
+        FROM warehouse.fact_order_items foi
+        JOIN warehouse.fact_orders fo ON fo.order_key = foi.order_key
+        JOIN warehouse.dim_product dp ON dp.product_key = foi.product_key
+        WHERE fo.order_status = 'completed'
+        GROUP BY dp.category
+        ORDER BY revenue DESC
+        """
+    )
+
+
+@app.get("/behavior/devices")
+def behavior_devices():
+    return run_query(
+        """
+        SELECT COALESCE(dd.device_name, 'Unknown') AS device_name, COUNT(*) AS event_count
+        FROM warehouse.fact_website_events fwe
+        LEFT JOIN warehouse.dim_device dd ON dd.device_key = fwe.device_key
+        GROUP BY dd.device_name
+        ORDER BY event_count DESC
+        """
+    )
+
+
+@app.get("/behavior/traffic-sources")
+def behavior_traffic_sources():
+    return run_query(
+        """
+        SELECT COALESCE(traffic_source, 'Unknown') AS traffic_source, COUNT(*) AS event_count
+        FROM warehouse.fact_website_events
+        GROUP BY traffic_source
+        ORDER BY event_count DESC
+        """
+    )
+
+
+@app.get("/behavior/top-products")
+def behavior_top_products(limit: int = Query(default=10, ge=1, le=50)):
+    return run_query(
+        """
+        SELECT dp.product_name, COUNT(*) AS view_count
+        FROM warehouse.fact_website_events fwe
+        JOIN warehouse.dim_product dp ON dp.product_key = fwe.product_key
+        WHERE fwe.event_type = 'product_view'
+        GROUP BY dp.product_name
+        ORDER BY view_count DESC
+        LIMIT :limit
+        """,
+        {"limit": limit},
+    )
+
+
+@app.get("/behavior/events-trend")
+def behavior_events_trend():
+    return run_query(
+        """
+        SELECT date_trunc('month', event_timestamp)::date AS month, COUNT(*) AS event_count
+        FROM warehouse.fact_website_events
+        GROUP BY 1
+        ORDER BY 1
+        """
     )
 
 
